@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# Check if task argument is provided
+if [ $# -eq 0 ]; then
+    echo "Error: No task provided."
+    echo "Usage: ./run.sh \"<task description>\""
+    echo ""
+    echo "Example:"
+    echo "  ./run.sh \"Create a React component called TodoList.jsx\""
+    exit 1
+fi
+
 # Check if Ollama is running
 if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
     echo "Error: Ollama server is not running."
@@ -11,7 +21,7 @@ fi
 echo "Ollama server is running. Starting agent..."
 
 # Run the agent with provided arguments
-python3 agent.py "$@"
+python agent.py "$@"
 
 ### 1. Run it on a repo
 # ```bash
