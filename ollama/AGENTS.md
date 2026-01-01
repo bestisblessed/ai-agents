@@ -19,7 +19,6 @@ nemotron-3-nano:30b-cloud                    01d0d069a149    -         3 hours a
 gemini-3-flash-preview:latest                ebade0d31690    -         3 hours ago
 gemini-3-pro-preview:latest                  91a1db042ba1    -         3 hours ago
 
-
 # 2. PROPOSED/EX GOOD WORKFLOW
 
 **Question:** Which models are best from my list for a general agentic tasks and planning based workflow? 
