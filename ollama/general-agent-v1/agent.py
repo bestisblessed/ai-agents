@@ -61,7 +61,7 @@ def ollama_chat(
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "stream": stream,
+        "stream": True,  # Always stream to enable verbose output
     }
     if options:
         payload["options"] = options
@@ -73,9 +73,36 @@ def ollama_chat(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    
+    full_content = []
+    
     try:
         with urlopen(req, timeout=timeout_s) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
+            # Iterate over the stream
+            for line in resp:
+                if not line:
+                    continue
+                    
+                decoded_line = line.decode("utf-8", errors="replace")
+                try:
+                    obj = json.loads(decoded_line)
+                    chunk = obj.get("message", {}).get("content", "")
+                    if chunk:
+                        # Print to stderr for immediate feedback without buffering issues
+                        sys.stderr.write(chunk)
+                        sys.stderr.flush()
+                        full_content.append(chunk)
+                    
+                    if obj.get("done"):
+                        break
+                        
+                except json.JSONDecodeError:
+                    continue
+                    
+        # Print newline after stream finishes
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+        
     except HTTPError as e:
         raise RuntimeError(
             f"Ollama HTTPError {e.code}: {e.read().decode('utf-8', errors='replace')}"
@@ -83,11 +110,7 @@ def ollama_chat(
     except URLError as e:
         raise RuntimeError(f"Could not reach Ollama at {host}. Is `ollama serve` running? ({e})") from e
 
-    try:
-        obj = json.loads(body)
-        return obj.get("message", {}).get("content", "")
-    except json.JSONDecodeError:
-        return body
+    return "".join(full_content)
 
 
 @dataclass
@@ -383,6 +406,14 @@ def run_workflow(
         if "temperature" not in executor_kwargs or executor_kwargs["temperature"] is None:
              raise ValueError("Missing 'temperature' in executor_options in config file.")
         raw = ollama_chat(models.executor, executor_history, host=host, **{k: v for k, v in executor_kwargs.items() if v is not None})
+        # Log executor raw response for debugging (truncated to avoid noise)
+        if raw:
+            preview = raw[:2000]
+            if len(raw) > 2000:
+                preview += "...(truncated)"
+            sys.stderr.write("\n[debug] Executor raw response:\n")
+            sys.stderr.write(preview + "\n")
+            sys.stderr.flush()
         obj = extract_json_object(raw) or {"action": "done", "summary": f"Executor returned non-JSON:\n{raw[:1000]}", "files_changed": []}
 
         if obj.get("action") == "tool":

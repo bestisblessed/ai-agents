@@ -16,15 +16,19 @@
 # Workflow Options:
 # max_iters - Maximum iterations before timeout (default: 12)
 
-planner_model = "qwen3:14b-q4_K_M"
+#planner_model = "qwen3:14b-q4_K_M"
+planner_model = "gpt-oss:20b"
 # executor_model = "qwen3-coder:30b-a3b-q4_K_M"
-executor_model = "rnj-1:8b-instruct-q4_K_M"
+executor_model = "qwen3:14b-q4_K_M"
+# executor_model = "rnj-1:8b-instruct-q4_K_M"
+# executor_model = "rnj-1:8b-instruct-q4_K_M"
+# executor_model = "qwen3-coder:480b-cloud"
 helper_model = "rnj-1:8b-instruct-q4_K_M"
 ollama_host = "http://localhost:11434"
 max_iters = 12
 planner_options = {
     "temperature": 0.2,
-    "num_ctx": 8192,
+    "num_ctx": 4096,
     "num_predict": 4096,
     # "top_p": 0.9,
     # "top_k": 40,
@@ -32,16 +36,16 @@ planner_options = {
     # "seed": None,
 }
 executor_options = {
-    "temperature": 0.1,
-    "num_ctx": 8192,
-    "num_predict": 8192,
+    "temperature": 0.2,
+    "num_ctx": 4096,
+    "num_predict": 4096,
     "repeat_penalty": 1.1,
     # "top_p": 0.95,
     # "top_k": 40,
     # "seed": None,
 }
 helper_options = {
-    "temperature": 0.1,
+    "temperature": 0.2,
     "num_predict": 4096,
     # "num_ctx": 4096,
     # "top_p": 0.9,
