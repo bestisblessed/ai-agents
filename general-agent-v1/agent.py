@@ -308,12 +308,12 @@ def run_workflow(repo_root: Path, task: str, models: Models, host: str = DEFAULT
 
 
 def main(argv: List[str]) -> int:
-    if len(argv) < 3:
-        print("Usage: agent.py <repo_root> <task...>")
+    if len(argv) < 2:
+        print("Usage: agent.py <task...>")
         return 2
 
-    repo_root = Path(argv[1]).expanduser()
-    task = " ".join(argv[2:]).strip()
+    repo_root = Path.cwd()
+    task = " ".join(argv[1:]).strip()
 
     models = Models(
         planner=os.environ.get("PLANNER_MODEL", "qwen3:30b-a3b-q4_K_M"),

@@ -15,8 +15,7 @@ python3 agent.py "$@"
 
 ### 1. Run it on a repo
 # ```bash
-# python3 agent.py ~/Code/ai-agents "Create a responsive landing page in index.html with hero, 3 feature cards, pricing, and FAQ accordion. No frameworks."
-# ./run.sh ~/Code/ai-agents "Create a responsive landing page in index.html with hero, 3 feature cards, pricing, and FAQ accordion. No frameworks."
+# ./run.sh "Create a responsive landing page in index.html with hero, 3 feature cards, pricing, and FAQ accordion. No frameworks."
 # ```
 
 ### 2. Swap in smaller planning models (when 30B is too heavy)
