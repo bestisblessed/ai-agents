@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -30,20 +31,40 @@ def ollama_chat(
     messages: List[Dict[str, str]],
     *,
     host: str = DEFAULT_OLLAMA,
-    temperature: float = 0.2,
+    temperature: Optional[float] = None,
     num_ctx: Optional[int] = None,
+    num_predict: Optional[int] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+    repeat_penalty: Optional[float] = None,
+    seed: Optional[int] = None,
     stream: bool = False,
     timeout_s: int = 600,
 ) -> str:
     """Calls Ollama's /api/chat endpoint and returns assistant content."""
+    options: Dict[str, Any] = {}
+    if temperature is not None:
+        options["temperature"] = float(temperature)
+    if num_ctx is not None:
+        options["num_ctx"] = int(num_ctx)
+    if num_predict is not None:
+        options["num_predict"] = int(num_predict)
+    if top_p is not None:
+        options["top_p"] = float(top_p)
+    if top_k is not None:
+        options["top_k"] = int(top_k)
+    if repeat_penalty is not None:
+        options["repeat_penalty"] = float(repeat_penalty)
+    if seed is not None:
+        options["seed"] = int(seed)
+    
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": stream,
-        "options": {"temperature": temperature},
     }
-    if num_ctx is not None:
-        payload["options"]["num_ctx"] = int(num_ctx)
+    if options:
+        payload["options"] = options
 
     data = json.dumps(payload).encode("utf-8")
     req = Request(
@@ -213,6 +234,78 @@ class Models:
     helper: str
 
 
+@dataclass
+class ModelOptions:
+    temperature: Optional[float] = None
+    num_ctx: Optional[int] = None
+    num_predict: Optional[int] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repeat_penalty: Optional[float] = None
+    seed: Optional[int] = None
+
+
+def _parse_simple_yaml(text: str) -> Dict[str, Any]:
+    """Simple YAML parser for basic key-value and nested structures.
+    Supports comments (#) and basic indentation. Not a full YAML parser."""
+    result: Dict[str, Any] = {}
+    lines = text.split('\n')
+    stack: List[Dict[str, Any]] = [result]
+    indent_stack: List[int] = [0]
+    
+    for line in lines:
+        # Remove comments
+        if '#' in line:
+            line = line[:line.index('#')]
+        line = line.rstrip()
+        if not line:
+            continue
+        
+        # Calculate indent
+        indent = len(line) - len(line.lstrip())
+        line = line.strip()
+        
+        # Pop stack until we're at the right level
+        while len(indent_stack) > 1 and indent <= indent_stack[-1]:
+            stack.pop()
+            indent_stack.pop()
+        
+        # Parse key: value
+        if ':' in line:
+            key, value = line.split(':', 1)
+            key = key.strip().strip('"\'')
+            value = value.strip().strip('"\'')
+            
+            # Try to parse value
+            if value == '':
+                # Nested object
+                new_dict: Dict[str, Any] = {}
+                stack[-1][key] = new_dict
+                stack.append(new_dict)
+                indent_stack.append(indent)
+            elif value.lower() == 'true':
+                stack[-1][key] = True
+            elif value.lower() == 'false':
+                stack[-1][key] = False
+            elif value.lower() == 'null' or value.lower() == 'none':
+                stack[-1][key] = None
+            elif value.startswith('[') and value.endswith(']'):
+                # Simple list parsing
+                items = [x.strip().strip('"\'') for x in value[1:-1].split(',')]
+                stack[-1][key] = items
+            else:
+                # Try number, otherwise string
+                try:
+                    if '.' in value:
+                        stack[-1][key] = float(value)
+                    else:
+                        stack[-1][key] = int(value)
+                except ValueError:
+                    stack[-1][key] = value
+    
+    return result
+
+
 def dispatch_tool(tools: RepoTools, tool: str, args: Dict[str, Any]) -> ToolResult:
     if tool == "list_files":
         return tools.list_files(subdir=str(args.get("subdir", ".")), limit=int(args.get("limit", 200)))
@@ -225,7 +318,16 @@ def dispatch_tool(tools: RepoTools, tool: str, args: Dict[str, Any]) -> ToolResu
     return ToolResult(False, f"Unknown tool: {tool}")
 
 
-def run_workflow(repo_root: Path, task: str, models: Models, host: str = DEFAULT_OLLAMA, max_iters: int = 12) -> None:
+def run_workflow(
+    repo_root: Path,
+    task: str,
+    models: Models,
+    host: str = DEFAULT_OLLAMA,
+    max_iters: int = 12,
+    planner_opts: Optional[ModelOptions] = None,
+    executor_opts: Optional[ModelOptions] = None,
+    helper_opts: Optional[ModelOptions] = None,
+) -> None:
     tools = RepoTools(repo_root)
 
     # Planner
@@ -233,7 +335,19 @@ def run_workflow(repo_root: Path, task: str, models: Models, host: str = DEFAULT
         {"role": "system", "content": PLANNER_SYS},
         {"role": "user", "content": f"Task: {task}\nRepo root: {repo_root}"},
     ]
-    plan_obj = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, temperature=0.2))
+    print(f"  > [Planner] Thinking...")
+    planner_kwargs = {}
+    if planner_opts:
+        planner_kwargs = {
+            "temperature": planner_opts.temperature,
+            "num_ctx": planner_opts.num_ctx,
+            "num_predict": planner_opts.num_predict,
+            "top_p": planner_opts.top_p,
+            "top_k": planner_opts.top_k,
+            "repeat_penalty": planner_opts.repeat_penalty,
+            "seed": planner_opts.seed,
+        }
+    plan_obj = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, temperature=0.2, **{k: v for k, v in planner_kwargs.items() if v is not None}))
     if not plan_obj:
         raise RuntimeError("Planner did not return valid JSON.")
     plan = plan_obj.get("plan", [])
@@ -250,12 +364,25 @@ def run_workflow(repo_root: Path, task: str, models: Models, host: str = DEFAULT
 
     for it in range(1, max_iters + 1):
         executor_history.append({"role": "user", "content": f"Iteration {it}. Instruction: {instruction}"})
-        raw = ollama_chat(models.executor, executor_history, host=host, temperature=0.1)
+        print(f"  > [Executor] Thinking... (Iteration {it})")
+        executor_kwargs = {}
+        if executor_opts:
+            executor_kwargs = {
+                "temperature": executor_opts.temperature,
+                "num_ctx": executor_opts.num_ctx,
+                "num_predict": executor_opts.num_predict,
+                "top_p": executor_opts.top_p,
+                "top_k": executor_opts.top_k,
+                "repeat_penalty": executor_opts.repeat_penalty,
+                "seed": executor_opts.seed,
+            }
+        raw = ollama_chat(models.executor, executor_history, host=host, temperature=0.1, **{k: v for k, v in executor_kwargs.items() if v is not None})
         obj = extract_json_object(raw) or {"action": "done", "summary": f"Executor returned non-JSON:\n{raw[:1000]}", "files_changed": []}
 
         if obj.get("action") == "tool":
             tool = obj.get("tool", "")
             args = obj.get("args", {}) or {}
+            print(f"  > [Tool] {tool} args={json.dumps(args)}")
             tr = dispatch_tool(tools, tool, args)
 
             executor_history.append({"role": "assistant", "content": raw})
@@ -272,7 +399,19 @@ def run_workflow(repo_root: Path, task: str, models: Models, host: str = DEFAULT
 
             # Helper review
             helper_history.append({"role": "user", "content": f"Task: {task}\nExecutor summary:\n{summary}\nFiles changed: {files_changed}"})
-            hraw = ollama_chat(models.helper, helper_history, host=host, temperature=0.1)
+            print(f"  > [Helper] Reviewing...")
+            helper_kwargs = {}
+            if helper_opts:
+                helper_kwargs = {
+                    "temperature": helper_opts.temperature,
+                    "num_ctx": helper_opts.num_ctx,
+                    "num_predict": helper_opts.num_predict,
+                    "top_p": helper_opts.top_p,
+                    "top_k": helper_opts.top_k,
+                    "repeat_penalty": helper_opts.repeat_penalty,
+                    "seed": helper_opts.seed,
+                }
+            hraw = ollama_chat(models.helper, helper_history, host=host, temperature=0.1, **{k: v for k, v in helper_kwargs.items() if v is not None})
             hobj = extract_json_object(hraw) or {"verdict": "needs_fix", "issues": ["Helper returned non-JSON"], "suggestions": []}
 
             print("\n=== REVIEW ===")
@@ -291,7 +430,7 @@ def run_workflow(repo_root: Path, task: str, models: Models, host: str = DEFAULT
             # Ask planner for updated instruction
             planner_msgs.append({"role": "assistant", "content": json.dumps(plan_obj)})
             planner_msgs.append({"role": "user", "content": f"Helper verdict needs_fix. Issues: {hobj.get('issues')}. Update next instruction."})
-            plan_obj2 = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, temperature=0.2))
+            plan_obj2 = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, temperature=0.2, **{k: v for k, v in planner_kwargs.items() if v is not None}))
             if plan_obj2 and (plan_obj2.get("next") or {}).get("instruction"):
                 plan_obj = plan_obj2
                 instruction = plan_obj2["next"]["instruction"]
@@ -315,17 +454,77 @@ def main(argv: List[str]) -> int:
     repo_root = Path.cwd()
     task = " ".join(argv[1:]).strip()
 
-    models = Models(
-        planner=os.environ.get("PLANNER_MODEL", "qwen3:14b-q4_K_M"),
-        executor=os.environ.get("EXECUTOR_MODEL", "qwen3-coder:30b-a3b-q4_K_M"),
-        helper=os.environ.get("HELPER_MODEL", "rnj-1:8b-instruct-q4_K_M"),
-    )
+    # Load config if exists (try .py, .yaml, .json in that order)
+    config = {}
+    config_paths = [
+        repo_root / "config.py",
+        repo_root / "config.yaml",
+        repo_root / "config.json",
+    ]
+    
+    for config_path in config_paths:
+        if not config_path.exists():
+            continue
+        
+        try:
+            if config_path.suffix == ".py":
+                # Load Python config file
+                spec = importlib.util.spec_from_file_location("config", config_path)
+                if spec and spec.loader:
+                    config_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(config_module)
+                    # Extract config dict from module
+                    config = {
+                        k: v for k, v in vars(config_module).items()
+                        if not k.startswith("_") and not callable(v)
+                    }
+                break
+            elif config_path.suffix == ".yaml" or config_path.suffix == ".yml":
+                # Simple YAML parser (basic support, no external deps)
+                # This is a minimal parser that handles basic YAML structures
+                config_text = config_path.read_text()
+                config = _parse_simple_yaml(config_text)
+                break
+            else:
+                # JSON
+                config = json.loads(config_path.read_text())
+                break
+        except Exception as e:
+            print(f"Warning: Could not parse {config_path.name}: {e}")
+            continue
 
-    print(f"Ollama host: {DEFAULT_OLLAMA}")
+    models = Models(
+        planner=os.environ.get("PLANNER_MODEL", config.get("planner_model", "qwen3:14b-q4_K_M")),
+        executor=os.environ.get("EXECUTOR_MODEL", config.get("executor_model", "qwen3-coder:30b-a3b-q4_K_M")),
+        helper=os.environ.get("HELPER_MODEL", config.get("helper_model", "rnj-1:8b-instruct-q4_K_M")),
+    )
+    host = os.environ.get("OLLAMA_HOST", config.get("ollama_host", DEFAULT_OLLAMA))
+    
+    # Load model options from config
+    def load_options(role: str) -> Optional[ModelOptions]:
+        opts_dict = config.get(f"{role}_options", {})
+        if not opts_dict:
+            return None
+        return ModelOptions(
+            temperature=opts_dict.get("temperature"),
+            num_ctx=opts_dict.get("num_ctx"),
+            num_predict=opts_dict.get("num_predict"),
+            top_p=opts_dict.get("top_p"),
+            top_k=opts_dict.get("top_k"),
+            repeat_penalty=opts_dict.get("repeat_penalty"),
+            seed=opts_dict.get("seed"),
+        )
+    
+    planner_opts = load_options("planner")
+    executor_opts = load_options("executor")
+    helper_opts = load_options("helper")
+    max_iters = config.get("max_iters", 12)
+
+    print(f"Ollama host: {host}")
     print(f"Planner:  {models.planner}")
     print(f"Executor: {models.executor}")
     print(f"Helper:   {models.helper}")
-    run_workflow(repo_root, task, models)
+    run_workflow(repo_root, task, models, host=host, max_iters=max_iters, planner_opts=planner_opts, executor_opts=executor_opts, helper_opts=helper_opts)
     return 0
 
 
