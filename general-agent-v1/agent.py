@@ -316,7 +316,7 @@ def main(argv: List[str]) -> int:
     task = " ".join(argv[1:]).strip()
 
     models = Models(
-        planner=os.environ.get("PLANNER_MODEL", "qwen3:30b-a3b-q4_K_M"),
+        planner=os.environ.get("PLANNER_MODEL", "qwen3:14b-q4_K_M"),
         executor=os.environ.get("EXECUTOR_MODEL", "qwen3-coder:30b-a3b-q4_K_M"),
         helper=os.environ.get("HELPER_MODEL", "rnj-1:8b-instruct-q4_K_M"),
     )
