@@ -347,7 +347,10 @@ def run_workflow(
             "repeat_penalty": planner_opts.repeat_penalty,
             "seed": planner_opts.seed,
         }
-    plan_obj = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, temperature=0.2, **{k: v for k, v in planner_kwargs.items() if v is not None}))
+    # Use config temperature if provided, otherwise error
+    if "temperature" not in planner_kwargs or planner_kwargs["temperature"] is None:
+        raise ValueError("Missing 'temperature' in planner_options in config file.")
+    plan_obj = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, **{k: v for k, v in planner_kwargs.items() if v is not None}))
     if not plan_obj:
         raise RuntimeError("Planner did not return valid JSON.")
     plan = plan_obj.get("plan", [])
@@ -376,7 +379,10 @@ def run_workflow(
                 "repeat_penalty": executor_opts.repeat_penalty,
                 "seed": executor_opts.seed,
             }
-        raw = ollama_chat(models.executor, executor_history, host=host, temperature=0.1, **{k: v for k, v in executor_kwargs.items() if v is not None})
+        # Use config temperature if provided, otherwise error
+        if "temperature" not in executor_kwargs or executor_kwargs["temperature"] is None:
+             raise ValueError("Missing 'temperature' in executor_options in config file.")
+        raw = ollama_chat(models.executor, executor_history, host=host, **{k: v for k, v in executor_kwargs.items() if v is not None})
         obj = extract_json_object(raw) or {"action": "done", "summary": f"Executor returned non-JSON:\n{raw[:1000]}", "files_changed": []}
 
         if obj.get("action") == "tool":
@@ -411,7 +417,10 @@ def run_workflow(
                     "repeat_penalty": helper_opts.repeat_penalty,
                     "seed": helper_opts.seed,
                 }
-            hraw = ollama_chat(models.helper, helper_history, host=host, temperature=0.1, **{k: v for k, v in helper_kwargs.items() if v is not None})
+            # Use config temperature if provided, otherwise error
+            if "temperature" not in helper_kwargs or helper_kwargs["temperature"] is None:
+                raise ValueError("Missing 'temperature' in helper_options in config file.")
+            hraw = ollama_chat(models.helper, helper_history, host=host, **{k: v for k, v in helper_kwargs.items() if v is not None})
             hobj = extract_json_object(hraw) or {"verdict": "needs_fix", "issues": ["Helper returned non-JSON"], "suggestions": []}
 
             print("\n=== REVIEW ===")
@@ -430,7 +439,7 @@ def run_workflow(
             # Ask planner for updated instruction
             planner_msgs.append({"role": "assistant", "content": json.dumps(plan_obj)})
             planner_msgs.append({"role": "user", "content": f"Helper verdict needs_fix. Issues: {hobj.get('issues')}. Update next instruction."})
-            plan_obj2 = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, temperature=0.2, **{k: v for k, v in planner_kwargs.items() if v is not None}))
+            plan_obj2 = extract_json_object(ollama_chat(models.planner, planner_msgs, host=host, **{k: v for k, v in planner_kwargs.items() if v is not None}))
             if plan_obj2 and (plan_obj2.get("next") or {}).get("instruction"):
                 plan_obj = plan_obj2
                 instruction = plan_obj2["next"]["instruction"]
@@ -462,6 +471,7 @@ def main(argv: List[str]) -> int:
         repo_root / "config.json",
     ]
     
+    config_loaded = False
     for config_path in config_paths:
         if not config_path.exists():
             continue
@@ -478,27 +488,44 @@ def main(argv: List[str]) -> int:
                         k: v for k, v in vars(config_module).items()
                         if not k.startswith("_") and not callable(v)
                     }
+                config_loaded = True
                 break
             elif config_path.suffix == ".yaml" or config_path.suffix == ".yml":
                 # Simple YAML parser (basic support, no external deps)
                 # This is a minimal parser that handles basic YAML structures
                 config_text = config_path.read_text()
                 config = _parse_simple_yaml(config_text)
+                config_loaded = True
                 break
             else:
                 # JSON
                 config = json.loads(config_path.read_text())
+                config_loaded = True
                 break
         except Exception as e:
             print(f"Warning: Could not parse {config_path.name}: {e}")
             continue
 
+    if not config_loaded:
+        print("Error: No valid configuration file found (config.py, config.yaml, or config.json).")
+        print("Please create a configuration file with the required settings.")
+        return 1
+
     models = Models(
-        planner=os.environ.get("PLANNER_MODEL", config.get("planner_model", "qwen3:14b-q4_K_M")),
-        executor=os.environ.get("EXECUTOR_MODEL", config.get("executor_model", "qwen3-coder:30b-a3b-q4_K_M")),
-        helper=os.environ.get("HELPER_MODEL", config.get("helper_model", "rnj-1:8b-instruct-q4_K_M")),
+        planner=config.get("planner_model"),
+        executor=config.get("executor_model"),
+        helper=config.get("helper_model"),
     )
-    host = os.environ.get("OLLAMA_HOST", config.get("ollama_host", DEFAULT_OLLAMA))
+    
+    if not models.planner or not models.executor or not models.helper:
+        print("Error: Missing model definitions in config file.")
+        print("Ensure 'planner_model', 'executor_model', and 'helper_model' are set.")
+        return 1
+
+    host = config.get("ollama_host")
+    if not host:
+         print("Error: Missing 'ollama_host' in config file.")
+         return 1
     
     # Load model options from config
     def load_options(role: str) -> Optional[ModelOptions]:

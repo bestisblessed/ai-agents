@@ -17,7 +17,8 @@
 # max_iters - Maximum iterations before timeout (default: 12)
 
 planner_model = "qwen3:14b-q4_K_M"
-executor_model = "qwen3-coder:30b-a3b-q4_K_M"
+# executor_model = "qwen3-coder:30b-a3b-q4_K_M"
+executor_model = "rnj-1:8b-instruct-q4_K_M"
 helper_model = "rnj-1:8b-instruct-q4_K_M"
 ollama_host = "http://localhost:11434"
 max_iters = 12
@@ -32,7 +33,7 @@ planner_options = {
 }
 executor_options = {
     "temperature": 0.1,
-    "num_ctx": 16384,
+    "num_ctx": 8192,
     "num_predict": 8192,
     "repeat_penalty": 1.1,
     # "top_p": 0.95,
